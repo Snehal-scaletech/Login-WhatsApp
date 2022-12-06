@@ -1,8 +1,57 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Auth } from './auth.model';
+import * as bcrypt from 'bcrypt';
+import { JwtService } from '@nestjs/jwt';
 @Injectable()
 export class AuthService {
+    constructor(
+        @InjectModel(Auth)
+        private authModel:typeof Auth,
+        private jwtService : JwtService){}
 
-    async login():Promise<any>{
+    async createUser(userdata): Promise<Auth>{
+
+        const checkEmailExitOrNot = await this.checkEmailExist(userdata.email);
+
+        if(checkEmailExitOrNot){
+            throw new BadRequestException("Email address already exist, please check with different details.")
+        }else{
+            const hash = await bcrypt.hash(userdata.password, 16);
+            userdata.password = hash;
+            const addData = await this.authModel.create<Auth>(userdata);
+
+            if(!addData){
+                throw new BadRequestException("Something went wrong!")
+            }
+            return addData;
+        }
+    }
+
+    checkEmailExist(email:string){
+        return this.authModel.findOne({where:{email:email, status:'Active', is_deleted:'0'}});
+    }
+
+    async loginUser(userdata){
+      
+        const user = await this.checkEmailExist(userdata.email);
+   
+        if(!user){
+            throw new UnauthorizedException("User details not found.")
+        }else{
+            const isMatch = await bcrypt.compare(userdata.password, user.password);
+            if(isMatch){
+                console.log(user.dataValues)
+                const access_token = await this.jwtService.sign(user.dataValues); 
+            
+                return {userdata : user, token :access_token };
+            }else{
+                throw new UnauthorizedException("Password does not match.")
+            }
+        }
+    }
+
+    async getLoginURL():Promise<any>{
         const getUrlResults = await this.getUrlResult();
         return getUrlResults;
     }
@@ -69,4 +118,13 @@ export class AuthService {
             })
         })
     }
+
+    async updateDetails(req, body){
+        
+        const hash = await bcrypt.hash(body.password, 16);
+        
+        const updatedata = await this.authModel.update({ name: body.name, email:body.email, password:hash }, {where: {id: req.id}});
+        return updatedata;
+    }
+    
 }
